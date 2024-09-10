@@ -1,0 +1,156 @@
+##Script Holt Winters Multiplicativo 
+library(odbc)
+library(DBI)
+library(ggplot2)
+library(dplyr)
+library(forecast)
+library(tseries)
+library(scales)
+
+options(digits = 15)
+
+##importar o arquivo de dados na aba Environment, import Dataset do RStudio
+dados <- data.frame(B92)
+
+print(dados)
+
+# Transformar a coluna 'valor' em um vetor
+dados <- dados$valor
+print(dados)
+
+
+# Criar a série temporal de março de 2022 a março de 2024
+serie <- ts(dados, start = c(2022, 3), end = c(2024,3), frequency = 12)
+print(serie)
+plot(serie)
+
+#efeito sazonal por ano
+ggseasonplot(window(serie, start = c(2022, 3), end = c(2024,3))) +
+  labs(
+    title = "",
+    x = "Mês",
+    y = "Valor R$",
+    color = "Ano"
+  ) +
+  scale_y_continuous(labels = label_number(scale_cut = cut_long_scale()))+
+  theme_minimal() + # Tema opcional para melhor 
+  theme(
+    plot.title = element_text(face = "bold", family = "sans", size = 10, color = "Black"),       # Título em negrito, Arial e tamanho 16
+    axis.title.x = element_text(face = "bold", family = "sans", size = 10, color = "Black"),    # Nome do eixo X em negrito, Arial e tamanho 14
+    axis.title.y = element_text(face = "bold", family = "sans", size = 10, color = "Black"),    # Nome do eixo Y em negrito, Arial e tamanho 14
+    axis.text.x = element_text(face = "bold", family = "sans", size = 8, color = "Black"),     # Valores do eixo X em negrito, Arial e tamanho 12
+    axis.text.y = element_text(face = "bold", family = "sans", size = 8, color = "Black"),      # Valores do eixo Y em negrito, Arial e tamanho 12
+    legend.title = element_text(face = "bold", family = "sans", size = 10),    # Título da legenda em negrito, Arial e tamanho 15
+    legend.text = element_text(face = "bold", family = "sans", size = 8)      # Texto da legenda em negrito, Arial e tamanho 12
+  )
+
+
+# alterar a frequencia para 13 meses de sazonalidade (sazonalidade da serie)
+serie_ts <- ts(serie, frequency = 13)
+
+
+###Parametros adicionais do Modelo Multiplicativo para os beneficios B91, B92, B93 e B94
+###B91 = sem parametros adicionais
+###B92 =  damped=TRUE,exponential=TRUE, robust=TRUE
+###B93 =  sem parametros adicionais
+###B94 = damped=TRUE,exponential=TRUE, robust=TRUE
+
+#Cria o modelo Multiplicativo
+
+hw_model_M <- hw(serie_ts, seasonal = "multiplicative", seasonal.periods = 13,
+                 robust=TRUE,exponential=TRUE, damped=TRUE)
+
+
+##o comando summary passando o modelo como paramentro, gera as metricas de qualidade e
+##acurácia, os parâmetros de suavização: α, β e γ e os coeficientes l, b, s1 a s12. 
+summary(hw_model_M)
+
+
+# Previsões para os próximos 9 meses (abril de 2024 a dezembro de 2024)
+forecast_holtwinters <- forecast(hw_model_M, h = 9)
+print(forecast_holtwinters)
+
+# Criar o gráfico
+autoplot(forecast_holtwinters)
+
+
+# Análise dos resíduos (qualidade do modelo)
+checkresiduals(hw_model_M)
+plot(resid(hw_model_M))
+
+# Verificar a normalidade dos resíduos
+residuos <- residuals(hw_model_M)
+# Ho = distribuição normal : p > 0.05
+# Ha = distribuição != normal : p <= 0.05
+shapiro_test <- shapiro.test(residuos)
+cat("\nTeste de Shapiro-Wilk para normalidade dos resíduos:\n")
+print(shapiro_test)
+
+# Teste de Autocorrelação (Ljung-Box)
+# Ho = não é autocorrelacionado: p > 0.05
+# Ha = é autocorrelacionado: p <= 0.05
+# Teste de Ljung-Box para independência dos resíduos
+box_test <- Box.test(residuos, lag = 12, type = "Ljung-Box")
+cat("\nTeste de Ljung-Box para independência dos resíduos:\n")
+print(box_test)
+
+
+
+# Todo o scritp abaixo gera Plota a série original, a previsão, os valores ajustados e
+# o intervalo de confiança de 80%
+par(mar = c(5, 7, 4, 2) + 0.1)  # Aumenta a margem superior
+plot(1:(length(serie) + length(forecast_holtwinters$mean)), 
+     c(serie, forecast_holtwinters$mean), 
+     type = "n",  # Não plota nada ainda, só define o espaço
+     main = "",
+     xlab = "",  # Removemos o rótulo do eixo X aqui
+     ylab = "",  # Removemos o rótulo padrão do eixo Y
+     xaxt = "n",  # Suprime o eixo X padrão
+     yaxt = "n")  # Suprime o eixo Y padrão para personalização
+# Adicionar rótulo do eixo Y em uma posição mais à esquerda
+mtext("Valor R$", side = 2, line = 6)
+# Criar vetor de datas para todo o período (incluindo a previsão)
+datas <- seq(as.Date("2022-03-01"), by = "month", length.out = length(serie) + length(forecast_holtwinters$mean))
+# Adicionar eixo X com todas as datas
+axis(1, at = 1:length(datas), 
+     labels = format(datas, "%Y-%m"), 
+     las = 2,  # Rotaciona as etiquetas do eixo X
+     cex.axis = 0.9)  # Reduz o tamanho da fonte
+# Adicionar rótulo do eixo X
+mtext("Data", side = 1, line = 8)
+# Adicionar eixo Y com valores completos (sem notação científica) e etiquetas horizontais
+y_ticks <- pretty(c(serie, forecast_holtwinters$mean))
+axis(2, at = y_ticks, labels = format(y_ticks, big.mark = ",", scientific = FALSE), las = 1)
+# Adicionar linhas de grade horizontais
+abline(h = y_ticks, col = "gray80", lty = "dotted")
+# Adicionar linhas de grade verticais
+x_ticks <- seq(1, length(datas), by = 1)
+abline(v = x_ticks, col = "gray80", lty = "dotted")
+# Personalizar as cores
+lines(1:length(serie), serie, col = "black")
+lines((length(serie) + 1):(length(serie) + length(forecast_holtwinters$mean)), 
+      forecast_holtwinters$mean, col = "blue")
+# Adicionar a linha dos valores ajustados (fitted values)
+lines(1:length(forecast_holtwinters$fitted), forecast_holtwinters$fitted, col = "red", lty = 2)
+# Adicionar intervalo de confiança (se houver)
+if (!is.null(forecast_holtwinters$lower) & !is.null(forecast_holtwinters$upper)) {
+  lower <- forecast_holtwinters$lower[, 1]  # Seleciona o intervalo de confiança 80% inferior
+  upper <- forecast_holtwinters$upper[, 1]  # Seleciona o intervalo de confiança 80% superior
+  polygon(c((length(serie) + 1):(length(serie) + length(forecast_holtwinters$mean)), 
+            rev((length(serie) + 1):(length(serie) + length(forecast_holtwinters$mean)))),
+          c(lower, rev(upper)),
+          col = adjustcolor("light blue", alpha.f = 0.5), border = NA)
+}
+# Adicionar legenda no canto superior esquerdo, fora das margens do gráfico
+legend("topleft", 
+       inset = c(-0.1, -0.3),  # Ajusta a posição para fora da margem superior esquerda
+       legend = c("Série Original", "Previsão", "Valores Ajustados", "Intervalo de Confiança 80%"), 
+       col = c("black", "blue", "red", "light blue"), 
+       lty = c(1, 1, 2, 1), 
+       fill = c(NA, NA, NA, "light blue"),
+       cex = 0.8,         # Reduz o tamanho da fonte
+       x.intersp = 0.5,   # Reduz o espaçamento entre os itens na horizontal
+       y.intersp = 0.7,   # Reduz o espaçamento entre as linhas da legenda
+       lwd = 1,
+       xpd = TRUE  # Permite desenhar fora da área de plotagem
+) 
